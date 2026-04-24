@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Run the spark test suite.
+#
+exec "$(dirname "$0")/spark-test.sh"

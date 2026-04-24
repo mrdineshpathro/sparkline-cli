@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+#
+# spark — generate sparklines from a list of numbers.
+#
+# Usage:
+#   spark [options] VALUE,...
+#   echo "VALUE,..." | spark [options]
+#
+# Examples:
+#   spark 1 5 22 13 53
+#   # => ▁▁▃▂█
+#
+#   spark 0,30,55,80,33,150
+#   # => ▁▂▃▄▂█
+#
+#   spark --color 1 50 100
+#   # => colored ▁▄█
+#
+#   spark --min --max 0 30 55 80 33 150
+#   # => ▁▂▃▄▂█  (min=0, max=150)
+#
+#   spark --scale 4 1 5 22 13 53
+#   # => ▁▁█▃▁  (4-step scale)
+#
+#   spark --reverse 1 5 22 13 53
+#   # => █▇▅▆█  (inverted)
+#
+#   spark --ascii 1 5 22 13 53
+#   # => __.-:=|  (ASCII fallback)
+#
+#   echo 9 13 5 17 1 | spark
+#   # => ▄▆▂█▁
+
+# ── version ─────────────────────────────────────────────────────────────────
+_SPARK_VERSION="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cat VERSION 2>/dev/null || echo "2.1.0")"
+
+# ── tick sets ────────────────────────────────────────────────────────────────
+# Unicode block chars (default)
+_SPARK_TICKS_UNICODE=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █)
+# ASCII fallback
+_SPARK_TICKS_ASCII=('_' '.' '-' ':' '=' '|' 'I' '#')
+# Constant-data mid ticks (unicode)
+_SPARK_TICKS_CONST=(▅ ▅ ▅ ▅ ▅ ▅ ▆ ▆)
+# Constant-data mid ticks (ascii)
+_SPARK_TICKS_CONST_ASCII=(':' ':' ':' ':' ':' ':' '=' '=')
+
+# ── ANSI helpers ─────────────────────────────────────────────────────────────
+# 8-step gradient: cold (blue) → warm (red), mirrors the 8 tick levels.
+_SPARK_COLORS=(
+  "\033[38;5;27m"   # level 0 – blue
+  "\033[38;5;33m"   # level 1 – light blue
+  "\033[38;5;45m"   # level 2 – cyan
+  "\033[38;5;82m"   # level 3 – green
+  "\033[38;5;226m"  # level 4 – yellow
+  "\033[38;5;214m"  # level 5 – orange
+  "\033[38;5;202m"  # level 6 – dark orange
+  "\033[38;5;196m"  # level 7 – red
+)
+_SPARK_RESET="\033[0m"
+
+# ── core ─────────────────────────────────────────────────────────────────────
+# spark_graph <use_color> <show_minmax> <no_newline> <reverse> <ascii> <scale> <numbers...>
+spark_graph() {
+  local use_color=$1 show_minmax=$2 no_newline=$3 reverse=$4 use_ascii=$5 scale=$6
+  shift 6
+
+  local n numbers=()
+  local min=2147483647 max=-2147483648
+
+  # Parse, validate, handle decimals by truncating, collect min/max.
+  for n in "$@"; do
+    # Validate: must be an optional leading minus followed by digits (with optional decimal).
+    if [[ ! "$n" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+      printf "spark: warning: skipping non-numeric value '%s'\n" "$n" >&2
+      continue
+    fi
+    n=${n%.*}   # drop fractional part (portable, no awk/printf needed)
+    (( n < min )) && min=$n
+    (( n > max )) && max=$n
+    numbers+=("$n")
+  done
+
+  if [[ ${#numbers[@]} -eq 0 ]]; then
+    printf "spark: error: no valid numeric input\n" >&2
+    return 1
+  fi
+
+  # Build the tick array at the requested scale (2–8, default 8).
+  local all_ticks all_const
+  if [[ "$use_ascii" == "1" ]]; then
+    all_ticks=("${_SPARK_TICKS_ASCII[@]}")
+    all_const=("${_SPARK_TICKS_CONST_ASCII[@]}")
+  else
+    all_ticks=("${_SPARK_TICKS_UNICODE[@]}")
+    all_const=("${_SPARK_TICKS_CONST[@]}")
+  fi
+
+  # Slice ticks down to <scale> entries, evenly distributed across 8.
+  local ticks=() const_ticks=()
+  local i step
+  step=$(( (8 - 1) * 256 / (scale - 1) ))  # fixed-point step across 8 slots
+  for (( i = 0; i < scale; i++ )); do
+    local idx=$(( (i * step) / 256 ))
+    (( idx > 7 )) && idx=7
+    ticks+=("${all_ticks[$idx]}")
+    const_ticks+=("${all_const[$idx]}")
+  done
+
+  # Reverse tick array if --reverse requested.
+  if [[ "$reverse" == "1" ]]; then
+    local rev=()
+    for (( i = ${#ticks[@]} - 1; i >= 0; i-- )); do
+      rev+=("${ticks[$i]}")
+    done
+    ticks=("${rev[@]}")
+  fi
+
+  # Constant data → use mid const ticks so the line isn't invisible.
+  (( min == max )) && ticks=("${const_ticks[@]}")
+
+  local num_ticks=$(( ${#ticks[@]} - 1 ))
+  local range=$(( max - min ))
+
+  # Scale factor (<<8 for fixed-point precision).
+  local f=$(( (range << 8) / num_ticks ))
+  (( f < 1 )) && f=1
+
+  local output=""
+  for n in "${numbers[@]}"; do
+    # Shift by min so negatives become non-negative before scaling.
+    local idx=$(( (((n - min) << 8) / f) ))
+    (( idx > num_ticks )) && idx=$num_ticks
+    (( idx < 0 ))         && idx=0
+
+    if [[ "$use_color" == "1" ]]; then
+      # Map tick index back to 0-7 range for colour (even if scale < 8).
+      local cidx=$(( (idx * 7) / num_ticks ))
+      (( cidx > 7 )) && cidx=7
+      output+="${_SPARK_COLORS[$cidx]}${ticks[$idx]}${_SPARK_RESET}"
+    else
+      output+="${ticks[$idx]}"
+    fi
+  done
+
+  if [[ "$show_minmax" == "1" ]]; then
+    output+="  (min=${min}, max=${max})"
+  fi
+
+  if [[ "$no_newline" == "1" ]]; then
+    printf "%b" "$output"
+  else
+    printf "%b\n" "$output"
+  fi
+}
+
+# ── help ──────────────────────────────────────────────────────────────────────
+spark_help() {
+  local prog
+  prog=$(basename "${BASH_SOURCE[0]}")
+  cat <<EOF
+
+  USAGE:
+    $prog [options] VALUE[,VALUE...]
+    echo "VALUE,..." | $prog [options]
+
+  OPTIONS:
+    -h, --help          Show this help text.
+    -V, --version       Print the version number.
+    -c, --color         Color the sparkline with a blue→red heat gradient.
+        --min           Append the minimum value to the output.
+        --max           Append the maximum value to the output.
+        --min --max     Append both min and max values (can be combined).
+    -n, --no-newline    Do not print a trailing newline.
+    -s, --scale N       Use N tick levels instead of 8 (2–8, default: 8).
+    -r, --reverse       Invert the bar mapping (high values → short bars).
+    -a, --ascii         Use ASCII characters instead of Unicode block chars.
+
+  EXAMPLES:
+    $prog 1 5 22 13 53
+    ▁▁▃▂█
+
+    $prog 0,30,55,80,33,150
+    ▁▂▃▄▂█
+
+    $prog --color 1 50 100
+    (colored gradient sparkline)
+
+    $prog --min --max 0 30 55 80 33 150
+    ▁▂▃▄▂█  (min=0, max=150)
+
+    $prog --scale 4 1 5 22 13 53
+    ▁▁█▃▁
+
+    $prog --reverse 1 5 22 13 53
+    █▇▅▆█
+
+    $prog --ascii 1 5 22 13 53
+    __.-:#
+
+    echo 9 13 5 17 1 | $prog
+    ▄▆▂█▁
+
+    $prog -- -5 0 5
+    ▁▄█
+
+EOF
+}
+
+# ── public entry-point (also usable when sourced) ────────────────────────────
+spark() {
+  local use_color=0 show_minmax=0 no_newline=0 reverse=0 use_ascii=0 scale=8
+  local args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        spark_help; return 0 ;;
+      -V|--version)
+        printf "spark %s\n" "$_SPARK_VERSION"; return 0 ;;
+      -c|--color)
+        use_color=1; shift ;;
+      --min|--max)
+        show_minmax=1; shift ;;
+      -n|--no-newline)
+        no_newline=1; shift ;;
+      -r|--reverse)
+        reverse=1; shift ;;
+      -a|--ascii)
+        use_ascii=1; shift ;;
+      -s|--scale)
+        if [[ -z "$2" || ! "$2" =~ ^[2-8]$ ]]; then
+          printf "spark: --scale requires a number between 2 and 8\n" >&2
+          return 1
+        fi
+        scale="$2"; shift 2 ;;
+      --)
+        shift; args+=("$@"); break ;;
+      *)
+        args+=("$1"); shift ;;
+    esac
+  done
+
+  # Expand comma-separated values.
+  local expanded=()
+  local raw
+  for raw in "${args[@]}"; do
+    IFS=',' read -ra parts <<< "$raw"
+    expanded+=("${parts[@]}")
+  done
+
+  # If no positional args, read from stdin.
+  if [[ ${#expanded[@]} -eq 0 ]]; then
+    local line
+    while IFS= read -r line; do
+      # Support both comma- and space-separated input from stdin.
+      for raw in ${line//,/ }; do
+        expanded+=("$raw")
+      done
+    done
+  fi
+
+  spark_graph "$use_color" "$show_minmax" "$no_newline" "$reverse" "$use_ascii" "$scale" "${expanded[@]}"
+}
+
+# ── run as script ─────────────────────────────────────────────────────────────
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  # No args + interactive terminal → show help.
+  if { [[ -z "$1" ]] && [[ -t 0 ]]; }; then
+    spark_help
+    exit 0
+  fi
+  spark "$@"
+fi
