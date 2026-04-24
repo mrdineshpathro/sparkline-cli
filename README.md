@@ -1,9 +1,8 @@
-# spark
-### sparklines for your shell
+# sparkline-cli
+### ▁▂▃▅▇ sparklines for your shell
 
 See? Here's a graph of your productivity gains after using spark: ▁▂▃▅▇
 
-[![CI](https://github.com/holman/spark/actions/workflows/ci.yml/badge.svg)](https://github.com/holman/spark/actions/workflows/ci.yml)
 ![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -32,13 +31,19 @@ See? Here's a graph of your productivity gains after using spark: ▁▂▃▅�
 
 ## install
 
-spark is a [shell script][bin], so drop it somewhere and make sure it's added
-to your `$PATH`. It's helpful if you have a super-neat collection of dotfiles,
-[like mine][dotfiles].
+spark is a single [shell script][bin] with zero dependencies — just drop it
+somewhere on your `$PATH`.
 
 **One-liner install:**
 ```sh
-sudo sh -c "curl https://raw.githubusercontent.com/holman/spark/master/spark -o /usr/local/bin/spark && chmod +x /usr/local/bin/spark"
+sudo sh -c "curl -fsSL https://raw.githubusercontent.com/mrdineshpathro/sparkline-cli/main/spark -o /usr/local/bin/spark && chmod +x /usr/local/bin/spark"
+```
+
+**Manual (clone and add to PATH):**
+```sh
+git clone https://github.com/mrdineshpathro/sparkline-cli.git ~/sparkline-cli
+echo 'export PATH="$PATH:$HOME/sparkline-cli"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 **Homebrew (macOS/Linux):**
@@ -46,16 +51,9 @@ sudo sh -c "curl https://raw.githubusercontent.com/holman/spark/master/spark -o 
 brew install spark
 ```
 
-**Manual (clone and add to PATH):**
-```sh
-git clone https://github.com/holman/spark.git ~/spark
-echo 'export PATH="$PATH:$HOME/spark"' >> ~/.bashrc
-source ~/.bashrc
-```
-
 **Source into the current shell session (no install needed):**
 ```sh
-source /path/to/spark/spark
+source /path/to/sparkline-cli/spark
 spark 1 5 22 13 53   # usable immediately as a shell function
 ```
 
@@ -551,10 +549,9 @@ Once everything looks good, open a pull request.
 
 ## ▇▁ ⟦⟧ ▇▁
 
-This is a [@holman][holman] joint.
+Originally a [@holman][holman] joint. Upgraded & maintained by [@mrdineshpathro](https://github.com/mrdineshpathro).
 
-[dotfiles]: https://github.com/holman/dotfiles
+[bin]:      https://github.com/mrdineshpathro/sparkline-cli/blob/main/spark
 [brew]:     https://github.com/mxcl/homebrew
-[bin]:      https://github.com/holman/spark/blob/master/spark
 [wiki]:     https://github.com/holman/spark/wiki/Wicked-Cool-Usage
 [holman]:   https://twitter.com/holman
